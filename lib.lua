@@ -98,9 +98,14 @@ local function killList(list)
     for _,d in ipairs(list) do if d and d.Remove then pcall(function() d:Remove() end) end end
 end
 
+-- Matcha quirk: Text uses `Size` in the runtime, not `FontSize`.
+-- Also, unknown props can throw — so we remap + pcall each write.
 local function draw(class, props)
     local d = Drawing.new(class)
-    for k,v in pairs(props or {}) do d[k] = v end
+    for k, v in pairs(props or {}) do
+        local key = (k == "FontSize") and "Size" or k
+        pcall(function() d[key] = v end)
+    end
     d.Visible = true
     return d
 end
@@ -167,24 +172,20 @@ end
 --  INPUT  — real cursor from GetMouse, real clicks from UIS
 -- ============================================================
 local function hitLayout()
-    -- returns a table of {id, x, y, w, h, ref} for hit-testing
     local layout = {}
     if not state.open then return layout end
     local px, py = state.POS.X, state.POS.Y
     local W, H = state.W, state.H
     local sidebar = 170
 
-    -- titlebar for drag
     table.insert(layout, { id="__titlebar", ref={kind="_titlebar"}, x=px, y=py, w=W, h=46 })
 
-    -- tabs
     local ty = py + 60
     for _, t in ipairs(tabsOrder) do
         table.insert(layout, { id="__tab_"..t.name, ref=t, x=px+10, y=ty, w=150, h=34, kind="tab" })
         ty = ty + 40
     end
 
-    -- active tab elements
     local tab = state.activeTab
     if tab then
         local ex = px + sidebar + 14
@@ -202,7 +203,6 @@ local function hitLayout()
 end
 
 local function layoutPositions()
-    -- returns a map id -> {x,y,w,h} matching hitLayout for rendering
     local m = {}
     local px, py = state.POS.X, state.POS.Y
     local W, H = state.W, state.H
@@ -258,7 +258,6 @@ UserInput.InputBegan:Connect(function(input, gpe)
             elseif hit.kind == "Slider" then
                 ref.dragging = true
                 state.draggingSlider = ref
-                -- jump to click
                 local pct = clamp((mx - (hit.x+10)) / (hit.w-20), 0, 1)
                 ref.value = ref.min + (ref.max-ref.min) * pct
                 if ref.cb then pcall(ref.cb, ref.value) end
@@ -279,7 +278,7 @@ UserInput.InputEnded:Connect(function(input)
 end)
 
 -- ============================================================
---  RENDER  — rebuild static chrome on tab/size change, animate dynamic
+--  RENDER
 -- ============================================================
 local function drawGlow(x,y,w,h,color,layers,z)
     local out = {}
@@ -302,32 +301,25 @@ local function buildChrome()
     local W, H = state.W, state.H
     local sidebar = 170
 
-    -- glow
     local g = drawGlow(px,py,W,H,Theme.Accent,5,state.z)
     for _,d in ipairs(g) do table.insert(persistent,d) end
 
-    -- base
     table.insert(persistent, draw("Square", { Position=v2(px,py), Size=v2(W,H), Color=Theme.Bg, Transparency=0.05, Filled=true, ZIndex=state.z+1 }))
     table.insert(persistent, draw("Square", { Position=v2(px,py), Size=v2(W,H), Color=Theme.Stroke, Transparency=0.5, Filled=false, ZIndex=state.z+2 }))
 
-    -- titlebar
     table.insert(persistent, draw("Square", { Position=v2(px,py), Size=v2(W,46), Color=Theme.Panel, Transparency=0.15, Filled=true, ZIndex=state.z+3 }))
     table.insert(persistent, draw("Line", { From=v2(px+1,py+46), To=v2(px+W-1,py+46), Color=Theme.Stroke, Transparency=0.5, Thickness=1, ZIndex=state.z+4 }))
 
-    -- sidebar
     table.insert(persistent, draw("Square", { Position=v2(px+1,py+47), Size=v2(sidebar,H-48), Color=Theme.Panel, Transparency=0.25, Filled=true, ZIndex=state.z+3 }))
     table.insert(persistent, draw("Line", { From=v2(px+sidebar+1,py+47), To=v2(px+sidebar+1,py+H-1), Color=Theme.Stroke, Transparency=0.4, Thickness=1, ZIndex=state.z+4 }))
 
-    -- title text
     table.insert(persistent, draw("Text", { Position=v2(px+18,py+14), Text=state.title, Color=Theme.Text, Font=Drawing.Fonts.SystemBold or Drawing.Fonts.UI, FontSize=16, Outline=true, ZIndex=state.z+10 }))
     table.insert(persistent, draw("Text", { Position=v2(px+W-18,py+18), Text="v1.0", Color=Theme.TextDim, Font=Drawing.Fonts.UI, FontSize=12, Outline=true, ZIndex=state.z+10 }))
 
-    -- accent strip (animated separately)
     local strip = draw("Square", { Position=v2(px,py), Size=v2(W,3), Color=Theme.Accent, Transparency=0.1, Filled=true, ZIndex=state.z+5 })
     table.insert(persistent, strip)
     state._strip = strip
 
-    -- tabs (static text bg, animate color via dynamic pass)
     local ty = py + 60
     for _, t in ipairs(tabsOrder) do
         local bg = draw("Square", { Position=v2(px+10,ty), Size=v2(150,34), Color=Theme.PanelAlt, Transparency=0.35, Filled=true, ZIndex=state.z+6 })
@@ -338,7 +330,6 @@ local function buildChrome()
         ty = ty + 40
     end
 
-    -- heading
     table.insert(persistent, draw("Text", { Position=v2(px+sidebar+14,py+66), Text="", Color=Theme.Text, Font=Drawing.Fonts.SystemBold or Drawing.Fonts.UI, FontSize=15, Outline=true, ZIndex=state.z+8 }))
     table.insert(persistent, draw("Line", { From=v2(px+sidebar+14,py+90), To=v2(px+W-18,py+90), Color=Theme.Stroke, Transparency=0.5, Thickness=1, ZIndex=state.z+6 }))
 
@@ -399,13 +390,12 @@ RunService.RenderStepped:Connect(function()
 end)
 
 -- ============================================================
---  MAIN LOOP  — update positions, hover, animation
+--  MAIN LOOP
 -- ============================================================
 RunService.RenderStepped:Connect(function(dt)
     updateMouse()
     local mx, my = state.mousePos.X, state.mousePos.Y
 
-    -- hide everything if closed
     if not state.open then
         for _,d in ipairs(persistent) do d.Visible = false end
         for _,d in ipairs(elements) do d.Visible = false end
@@ -414,16 +404,12 @@ RunService.RenderStepped:Connect(function(dt)
     for _,d in ipairs(persistent) do d.Visible = true end
     for _,d in ipairs(elements) do d.Visible = true end
 
-    -- dragging the whole window
     if state.drag and state.mouseDown then
         state.POS = v2(mx - state.drag.offX, my - state.drag.offY)
-        -- reposition static chrome quickly by rebuilding (cheap enough)
-        -- to avoid churn, we just rebuild; a smarter build could offset
         buildChrome()
         buildElements()
     end
 
-    -- slider drag
     if state.draggingSlider and state.mouseDown then
         local s = state.draggingSlider
         local m = layoutPositions()[s.id]
@@ -434,13 +420,11 @@ RunService.RenderStepped:Connect(function(dt)
         end
     end
 
-    -- accent pulse
     state.accentPulse = (state.accentPulse + dt * 1.8) % (math.pi*2)
     local pulse = 0.5 + 0.5*math.sin(state.accentPulse)
     local acc = lerpColor(Theme.Accent, Theme.Accent2, pulse)
     if state._strip then state._strip.Color = acc end
 
-    -- tabs styling
     for _, t in ipairs(tabsOrder) do
         local active = (t == state.activeTab)
         local hov = inRect(mx,my,state.POS.X+10, (t._bg and t._bg.Position.Y) or 0, 150, 34)
@@ -452,12 +436,10 @@ RunService.RenderStepped:Connect(function(dt)
         end
     end
 
-    -- heading text
     if state._heading and state.activeTab then
         state._heading.Text = string.upper(state.activeTab.name)
     end
 
-    -- element hover/animation
     if state.activeTab then
         local m = layoutPositions()
         for _, el in ipairs(state.activeTab.elements) do
