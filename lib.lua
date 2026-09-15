@@ -71,7 +71,7 @@ local state = {
     activeTab = nil,
     accentPulse = 0,
     hoverId = nil,
-    drag = nil,       -- {offX, offY} when dragging
+    drag = nil,
     draggingSlider = nil,
     mouseDown = false,
     mousePos = v2(0,0),
@@ -91,27 +91,38 @@ local function updateMouse()
 end
 
 -- ---------- drawing constructors ----------
-local persistent = {}   -- static chrome, rebuilt on layout change
-local elements   = {}   -- interactive controls
+local persistent = {}
+local elements   = {}
 
 local function killList(list)
     for _,d in ipairs(list) do if d and d.Remove then pcall(function() d:Remove() end) end end
 end
 
--- Matcha quirk: Text uses `Size` in the runtime, not `FontSize`.
--- Also, unknown props can throw — so we remap + pcall each write.
+-- Straight assignment, exactly like the Matcha docs' ESP example.
+-- Text uses `Size` — that's what the working example uses.
 local function draw(class, props)
     local d = Drawing.new(class)
-    for k, v in pairs(props or {}) do
-        local key = (k == "FontSize") and "Size" or k
-        pcall(function() d[key] = v end)
-    end
+    for k, v in pairs(props or {}) do d[k] = v end
     d.Visible = true
     return d
 end
 
+-- convenience for Text so we never fat-finger `FontSize` again
+local function drawText(props)
+    return draw("Text", {
+        Text     = props.Text or "",
+        Position = props.Position,
+        Color    = props.Color,
+        Size     = props.Size or 14,
+        Center   = props.Center or false,
+        Outline  = props.Outline ~= false,
+        Font     = props.Font or Drawing.Fonts.UI,
+        ZIndex   = props.ZIndex,
+    })
+end
+
 -- ============================================================
---  PUBLIC API  (declared up so tabs can be made before render)
+--  PUBLIC API
 -- ============================================================
 local tabsOrder = {}
 function UI:Window(opts)
@@ -169,7 +180,7 @@ function UI:Destroy()
 end
 
 -- ============================================================
---  INPUT  — real cursor from GetMouse, real clicks from UIS
+--  INPUT
 -- ============================================================
 local function hitLayout()
     local layout = {}
@@ -313,8 +324,8 @@ local function buildChrome()
     table.insert(persistent, draw("Square", { Position=v2(px+1,py+47), Size=v2(sidebar,H-48), Color=Theme.Panel, Transparency=0.25, Filled=true, ZIndex=state.z+3 }))
     table.insert(persistent, draw("Line", { From=v2(px+sidebar+1,py+47), To=v2(px+sidebar+1,py+H-1), Color=Theme.Stroke, Transparency=0.4, Thickness=1, ZIndex=state.z+4 }))
 
-    table.insert(persistent, draw("Text", { Position=v2(px+18,py+14), Text=state.title, Color=Theme.Text, Font=Drawing.Fonts.SystemBold or Drawing.Fonts.UI, FontSize=16, Outline=true, ZIndex=state.z+10 }))
-    table.insert(persistent, draw("Text", { Position=v2(px+W-18,py+18), Text="v1.0", Color=Theme.TextDim, Font=Drawing.Fonts.UI, FontSize=12, Outline=true, ZIndex=state.z+10 }))
+    table.insert(persistent, drawText({ Position=v2(px+18,py+14), Text=state.title, Color=Theme.Text, Font=Drawing.Fonts.SystemBold or Drawing.Fonts.UI, Size=16, Outline=true, ZIndex=state.z+10 }))
+    table.insert(persistent, drawText({ Position=v2(px+W-18,py+18), Text="v1.0", Color=Theme.TextDim, Font=Drawing.Fonts.UI, Size=12, Outline=true, ZIndex=state.z+10 }))
 
     local strip = draw("Square", { Position=v2(px,py), Size=v2(W,3), Color=Theme.Accent, Transparency=0.1, Filled=true, ZIndex=state.z+5 })
     table.insert(persistent, strip)
@@ -324,13 +335,13 @@ local function buildChrome()
     for _, t in ipairs(tabsOrder) do
         local bg = draw("Square", { Position=v2(px+10,ty), Size=v2(150,34), Color=Theme.PanelAlt, Transparency=0.35, Filled=true, ZIndex=state.z+6 })
         local br = draw("Square", { Position=v2(px+10,ty), Size=v2(150,34), Color=Theme.Stroke, Transparency=0.5, Filled=false, ZIndex=state.z+7 })
-        local tx = draw("Text", { Position=v2(px+24,ty+9), Text=t.name, Color=Theme.TextDim, Font=Drawing.Fonts.SystemBold or Drawing.Fonts.UI, FontSize=14, Outline=true, ZIndex=state.z+8 })
+        local tx = drawText({ Position=v2(px+24,ty+9), Text=t.name, Color=Theme.TextDim, Font=Drawing.Fonts.SystemBold or Drawing.Fonts.UI, Size=14, Outline=true, ZIndex=state.z+8 })
         table.insert(persistent, bg) table.insert(persistent, br) table.insert(persistent, tx)
         t._bg, t._br, t._tx = bg, br, tx
         ty = ty + 40
     end
 
-    table.insert(persistent, draw("Text", { Position=v2(px+sidebar+14,py+66), Text="", Color=Theme.Text, Font=Drawing.Fonts.SystemBold or Drawing.Fonts.UI, FontSize=15, Outline=true, ZIndex=state.z+8 }))
+    table.insert(persistent, drawText({ Position=v2(px+sidebar+14,py+66), Text="", Color=Theme.Text, Font=Drawing.Fonts.SystemBold or Drawing.Fonts.UI, Size=15, Outline=true, ZIndex=state.z+8 }))
     table.insert(persistent, draw("Line", { From=v2(px+sidebar+14,py+90), To=v2(px+W-18,py+90), Color=Theme.Stroke, Transparency=0.5, Thickness=1, ZIndex=state.z+6 }))
 
     state._heading = persistent[#persistent-1]
@@ -350,15 +361,15 @@ local function buildElements()
     for _, el in ipairs(tab.elements) do
         if el.kind == "Toggle" then
             el._bg = draw("Square", { Position=v2(ex,ey), Size=v2(ew,30), Color=Theme.PanelAlt, Transparency=0.4, Filled=true, ZIndex=state.z+6 })
-            el._tx = draw("Text", { Position=v2(ex+10,ey+8), Text=el.name, Color=Theme.Text, Font=Drawing.Fonts.UI, FontSize=13, Outline=true, ZIndex=state.z+8 })
+            el._tx = drawText({ Position=v2(ex+10,ey+8), Text=el.name, Color=Theme.Text, Font=Drawing.Fonts.UI, Size=13, Outline=true, ZIndex=state.z+8 })
             el._track = draw("Square", { Position=v2(ex+ew-42,ey+7), Size=v2(32,16), Color=Theme.Stroke, Transparency=0.5, Filled=true, ZIndex=state.z+7 })
             el._knob  = draw("Square", { Position=v2(ex+ew-42,ey+7), Size=v2(16,16), Color=Theme.TextDim, Transparency=0.15, Filled=true, ZIndex=state.z+8 })
             table.insert(elements, el._bg) table.insert(elements, el._tx) table.insert(elements, el._track) table.insert(elements, el._knob)
             ey = ey + 38
         elseif el.kind == "Slider" then
             el._bg = draw("Square", { Position=v2(ex,ey), Size=v2(ew,40), Color=Theme.PanelAlt, Transparency=0.4, Filled=true, ZIndex=state.z+6 })
-            el._tx = draw("Text", { Position=v2(ex+10,ey+6), Text=el.name, Color=Theme.Text, Font=Drawing.Fonts.UI, FontSize=13, Outline=true, ZIndex=state.z+8 })
-            el._val= draw("Text", { Position=v2(ex+ew-10,ey+6), Text=tostring(math.floor(el.value)), Color=Theme.Accent2, Font=Drawing.Fonts.SystemBold or Drawing.Fonts.UI, FontSize=13, Center=true, Outline=true, ZIndex=state.z+8 })
+            el._tx = drawText({ Position=v2(ex+10,ey+6), Text=el.name, Color=Theme.Text, Font=Drawing.Fonts.UI, Size=13, Outline=true, ZIndex=state.z+8 })
+            el._val= drawText({ Position=v2(ex+ew-10,ey+6), Text=tostring(math.floor(el.value)), Color=Theme.Accent2, Font=Drawing.Fonts.SystemBold or Drawing.Fonts.UI, Size=13, Center=true, Outline=true, ZIndex=state.z+8 })
             el._bar= draw("Square", { Position=v2(ex+10,ey+24), Size=v2(ew-20,6), Color=Theme.Stroke, Transparency=0.4, Filled=true, ZIndex=state.z+7 })
             el._fill=draw("Square", { Position=v2(ex+10,ey+24), Size=v2(0,6), Color=Theme.Accent, Transparency=0.1, Filled=true, ZIndex=state.z+8 })
             el._knobS=draw("Square", { Position=v2(ex+10,ey+20), Size=v2(8,14), Color=Theme.Text, Transparency=0.1, Filled=true, ZIndex=state.z+9 })
@@ -368,18 +379,17 @@ local function buildElements()
         elseif el.kind == "Button" then
             el._bg = draw("Square", { Position=v2(ex,ey), Size=v2(ew,32), Color=Theme.Accent, Transparency=0.25, Filled=true, ZIndex=state.z+6 })
             el._br = draw("Square", { Position=v2(ex,ey), Size=v2(ew,32), Color=Theme.Accent, Transparency=0.05, Filled=false, ZIndex=state.z+7 })
-            el._tx = draw("Text", { Position=v2(ex+ew/2,ey+9), Text=el.name, Color=Theme.Text, Font=Drawing.Fonts.SystemBold or Drawing.Fonts.UI, FontSize=14, Center=true, Outline=true, ZIndex=state.z+8 })
+            el._tx = drawText({ Position=v2(ex+ew/2,ey+9), Text=el.name, Color=Theme.Text, Font=Drawing.Fonts.SystemBold or Drawing.Fonts.UI, Size=14, Center=true, Outline=true, ZIndex=state.z+8 })
             table.insert(elements, el._bg) table.insert(elements, el._br) table.insert(elements, el._tx)
             ey = ey + 40
         elseif el.kind == "Label" then
-            el._tx = draw("Text", { Position=v2(ex+4,ey+4), Text=el.name, Color=Theme.TextDim, Font=Drawing.Fonts.UI, FontSize=13, Outline=true, ZIndex=state.z+7 })
+            el._tx = drawText({ Position=v2(ex+4,ey+4), Text=el.name, Color=Theme.TextDim, Font=Drawing.Fonts.UI, Size=13, Outline=true, ZIndex=state.z+7 })
             table.insert(elements, el._tx)
             ey = ey + 24
         end
     end
 end
 
--- rebuild chrome/elements when layout-affecting things change
 local lastTab, lastOpen
 RunService.RenderStepped:Connect(function()
     if lastTab ~= state.activeTab or lastOpen ~= state.open then
