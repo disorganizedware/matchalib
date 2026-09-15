@@ -1,16 +1,37 @@
 -- ============================================================
 --  Matcha UI  ·  single-file loadstring build
---  usage: local UI = loadstring(game:HttpGet("URL"))()
+--  loadstring(game:HttpGet("URL"))()
+--  UI is exposed via getgenv().MatchaUI — Matcha drops return values
 -- ============================================================
-local UI = setmetatable({}, {})
-UI.__index = UI
 
--- ---------- services ----------
-local RunService = game:GetService("RunService")
-local UserInput  = game:GetService("UserInputService")
-local Players    = game:GetService("Players")
-local Camera     = workspace.CurrentCamera
-local LP         = Players.LocalPlayer
+-- ---------- Matcha-safe service fetch ----------
+local function svc(name)
+    local ok, s = pcall(function() return game:GetService(name) end)
+    if ok and s then return s end
+    local ok2, s2 = pcall(function() return game:FindService(name) end)
+    if ok2 and s2 then return s2 end
+    return game[name]
+end
+
+local RunService = svc("RunService")
+local UserInput  = svc("UserInputService")
+local Players    = svc("Players")
+
+assert(RunService, "[matcha-ui] RunService unavailable")
+assert(UserInput,  "[matcha-ui] UserInputService unavailable")
+assert(Players,    "[matcha-ui] Players unavailable")
+
+local LP = Players.LocalPlayer
+while not LP do
+    task.wait(0.1)
+    LP = Players.LocalPlayer
+end
+
+local Camera = workspace.CurrentCamera
+while not Camera do
+    task.wait(0.1)
+    Camera = workspace.CurrentCamera
+end
 
 -- ---------- theme ----------
 local Theme = {
@@ -34,7 +55,7 @@ local function lerpColor(a,b,t) return Color3.new(lerp(a.R,b.R,t), lerp(a.G,b.G,
 local function v2(x,y) return Vector2.new(x,y) end
 local function inRect(px,py,x,y,w,h) return px>=x and px<=x+w and py>=y and py<=y+h end
 
--- ---------- renderer: tween all drawing props each frame ----------
+-- ---------- renderer: tween drawing props each frame ----------
 local Renderer = { items = {}, conn = nil }
 function Renderer:add(draw, targets, speed)
     table.insert(self.items, { draw=draw, tgt=targets or {}, sp=speed or 0.25 })
@@ -67,10 +88,8 @@ Renderer:start()
 -- ---------- state ----------
 local state = {
     open = true,
-    tabs = {},
     activeTab = nil,
     accentPulse = 0,
-    hoverId = nil,
     drag = nil,
     draggingSlider = nil,
     mouseDown = false,
@@ -90,7 +109,7 @@ local function updateMouse()
     end
 end
 
--- ---------- drawing constructors ----------
+-- ---------- drawing ----------
 local persistent = {}
 local elements   = {}
 
@@ -98,8 +117,7 @@ local function killList(list)
     for _,d in ipairs(list) do if d and d.Remove then pcall(function() d:Remove() end) end end
 end
 
--- Straight assignment, exactly like the Matcha docs' ESP example.
--- Text uses `Size` — that's what the working example uses.
+-- Text uses `Size` in Matcha's runtime — that's what the docs' ESP example uses.
 local function draw(class, props)
     local d = Drawing.new(class)
     for k, v in pairs(props or {}) do d[k] = v end
@@ -107,7 +125,6 @@ local function draw(class, props)
     return d
 end
 
--- convenience for Text so we never fat-finger `FontSize` again
 local function drawText(props)
     return draw("Text", {
         Text     = props.Text or "",
@@ -124,7 +141,11 @@ end
 -- ============================================================
 --  PUBLIC API
 -- ============================================================
+local UI = setmetatable({}, {})
+UI.__index = UI
+
 local tabsOrder = {}
+
 function UI:Window(opts)
     opts = opts or {}
     if opts.Title then state.title = opts.Title end
@@ -144,21 +165,21 @@ function UI:Tab(name) return newTab(name) end
 
 function UI:Toggle(tab, name, default, cb)
     local e = { kind="Toggle", name=name, on=default and true or false, cb=cb,
-                anim=0, hover=false, id="tg_"..#tabsOrder.."_"..(#tab.elements+1) }
+                anim=0, id="tg_"..#tabsOrder.."_"..(#tab.elements+1) }
     table.insert(tab.elements, e)
     return e
 end
 
 function UI:Slider(tab, name, min, max, default, cb)
     local e = { kind="Slider", name=name, min=min, max=max,
-                value=default or min, cb=cb, hover=false, dragging=false,
+                value=default or min, cb=cb, dragging=false,
                 id="sl_"..#tabsOrder.."_"..(#tab.elements+1) }
     table.insert(tab.elements, e)
     return e
 end
 
 function UI:Button(tab, name, cb)
-    local e = { kind="Button", name=name, cb=cb, hover=false, press=0,
+    local e = { kind="Button", name=name, cb=cb, press=0,
                 id="bt_"..#tabsOrder.."_"..(#tab.elements+1) }
     table.insert(tab.elements, e)
     return e
@@ -247,8 +268,7 @@ UserInput.InputBegan:Connect(function(input, gpe)
     state.mouseDown = true
     local mx, my = state.mousePos.X, state.mousePos.Y
 
-    local layout = hitLayout()
-    for _, hit in ipairs(layout) do
+    for _, hit in ipairs(hitLayout()) do
         if inRect(mx,my,hit.x,hit.y,hit.w,hit.h) then
             local ref = hit.ref
             if hit.id == "__titlebar" then
@@ -399,9 +419,6 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- ============================================================
---  MAIN LOOP
--- ============================================================
 RunService.RenderStepped:Connect(function(dt)
     updateMouse()
     local mx, my = state.mousePos.X, state.mousePos.Y
@@ -458,8 +475,7 @@ RunService.RenderStepped:Connect(function(dt)
                 local hov = inRect(mx,my,pos.x,pos.y,pos.w,pos.h)
                 if el.kind == "Toggle" then
                     el.anim = lerp(el.anim or 0, el.on and 1 or 0, clamp(dt*12,0,1))
-                    local tx = pos.x + pos.w - 42 + (el.anim*16)
-                    el._knob.Position = v2(tx, pos.y+7)
+                    el._knob.Position = v2(pos.x + pos.w - 42 + (el.anim*16), pos.y+7)
                     el._knob.Color = lerpColor(Theme.TextDim, Theme.Accent, el.anim)
                     el._track.Color = lerpColor(Theme.Stroke, Theme.Accent, el.anim)
                     el._track.Transparency = lerp(0.5, 0.1, el.anim)
@@ -473,7 +489,6 @@ RunService.RenderStepped:Connect(function(dt)
                     el._bg.Color = hov and Theme.Hover or Theme.PanelAlt
                 elseif el.kind == "Button" then
                     el.press = math.max(0, (el.press or 0) - dt*4)
-                    local scale = 1 - el.press*0.06
                     el._bg.Transparency = hov and 0.1 or 0.25
                     el._tx.Position = v2(pos.x + pos.w/2, pos.y + 9 + el.press*2)
                 end
@@ -488,6 +503,7 @@ end)
 buildChrome()
 buildElements()
 
-print("[matcha-ui] loaded · GetMouse-backed, real input, glow + pulse")
+-- Matcha drops loadstring return values — expose via getgenv()
+getgenv().MatchaUI = UI
 
-return UI
+print("[matcha-ui] loaded · getgenv().MatchaUI ready")
